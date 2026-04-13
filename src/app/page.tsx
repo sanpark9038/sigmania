@@ -2,19 +2,14 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { 
-  Upload, 
   Music, 
   Image as ImageIcon, 
-  Loader2, 
   ArrowUpDown, 
-  ExternalLink, 
-  LinkIcon, 
   Check, 
   LayoutGrid, 
   List, 
   AlertTriangle,
   Zap,
-  Layout,
   Database,
   ArrowUp
 } from 'lucide-react'
@@ -23,8 +18,17 @@ import { supabase } from '@/lib/supabase'
 import { SigEntry, SortField, SortOrder } from '@/types'
 import { SigTableRow } from '@/components/SigTableRow'
 import { SigGridItem } from '@/components/SigGridItem'
-import { useRouter } from 'next/navigation'
+import { AssetMatchDialog } from '@/components/AssetMatchDialog'
 import sampleRefined from '../../sample_refined.json'
+
+interface PendingFile {
+  id: string
+  file: File
+  type: 'image' | 'audio'
+  suggestedName: string
+  finalName: string
+  isSet?: boolean
+}
 
 const titleMap = new Map<string, string>()
 sampleRefined.forEach(item => {
@@ -39,6 +43,21 @@ export default function HomePage() {
   const [sortField, setSortField] = useState<SortField>('name')
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [filterRange, setFilterRange] = useState<string>('all')
+  
+  const ranges = [
+    { label: '전체', value: 'all' },
+    { label: '1,000~', value: '1' },
+    { label: '2,000~', value: '2' },
+    { label: '3,000~', value: '3' },
+    { label: '5,000~', value: '5' },
+    { label: '6,000~', value: '6' },
+    { label: '10,000~', value: '10' },
+    { label: '20,000~', value: '20' },
+  ]
+
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
+  const [isMatchDialogOpen, setIsMatchDialogOpen] = useState(false)
   
   const imageInputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
@@ -77,6 +96,18 @@ export default function HomePage() {
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [fetchFiles])
+
+  const filteredFiles = files.filter(file => {
+    if (filterRange === 'all') return true
+    
+    const num = parseInt((file.name || '').replace(/[^0-9]/g, '')) || 0
+    if (filterRange === '10') return num >= 10000 && num < 20000
+    if (filterRange === '20') return num >= 20000
+    
+    const rangeStart = parseInt(filterRange) * 1000
+    const rangeEnd = rangeStart + 1000
+    return num >= rangeStart && num < rangeEnd
+  })
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -122,84 +153,133 @@ export default function HomePage() {
       if (error) throw error
       toast.success('성공적으로 삭제되었습니다!', { id: toastId })
       fetchFiles()
-    } catch (error: any) {
-      toast.error(`삭제 에러: ${error.message}`, { id: toastId })
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류'
+      toast.error(`삭제 에러: ${errorMessage}`, { id: toastId })
     }
   }
 
-  const handleFileUpload = async (type: 'image' | 'audio', e: any) => {
-    let filesToUpload: File[] = []
-    if (e.target.files) filesToUpload = Array.from(e.target.files)
-    else if (e.dataTransfer.files) filesToUpload = Array.from(e.dataTransfer.files)
-    if (filesToUpload.length === 0) return
+  const processUpload = async (file: File, type: 'image' | 'audio', matchedName?: string) => {
+    const fileExt = file.name.split('.').pop()?.toLowerCase() || ''
+    const baseName = file.name.replace(/\.[^/.]+$/, "") 
+    const matchPrefix = matchedName || baseName.match(/^\d+/)?.[0] || baseName
 
-    const MAX_SIZE = 30 * 1024 * 1024
-    const ALLOWED_EXTS = type === 'image' ? ['png', 'gif', 'jpg', 'jpeg', 'webp'] : ['mp3', 'ogg', 'oga']
-
-    setIsUploading(true)
-    const toastId = toast.loading(`${type === 'image' ? '이미지' : '음원'} 업로드 중...`)
+    const fileName = `${Math.random().toString(36).substring(2)}-${Date.now()}.${fileExt}`
+    const bucket = type === 'image' ? 'images' : 'audio'
     
-    try {
-      for (const file of filesToUpload) {
-        const fileExt = file.name.split('.').pop()?.toLowerCase() || ''
-        const baseName = file.name.replace(/\.[^/.]+$/, "") 
-        const matchPrefix = baseName.match(/^\d+/)?.[0] || baseName
+    const { error: uploadError } = await supabase.storage.from(bucket).upload(fileName, file)
+    if (uploadError) throw uploadError
+    const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(fileName)
 
-        if (file.size > MAX_SIZE) throw new Error(`${file.name}: 30MB 제한 초과`)
-        if (!ALLOWED_EXTS.includes(fileExt)) throw new Error(`${file.name}: 허용되지 않는 확장자`)
+    const { data: existing } = await supabase
+      .from('files')
+      .select('*')
+      .eq('name', matchPrefix)
+      .single()
 
-        const fileName = `${Math.random().toString(36).substring(2)}-${Date.now()}.${fileExt}`
-        const bucket = type === 'image' ? 'images' : 'audio'
-        const { error: uploadError } = await supabase.storage.from(bucket).upload(fileName, file)
-        if (uploadError) throw uploadError
-        const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(fileName)
-
-        const { data: existing } = await supabase
-          .from('files')
-          .select('*')
-          .eq('name', matchPrefix)
-          .single()
-
-        if (existing) {
-          const isImage = type === 'image'
-          const existingUrl = isImage ? existing.image_url : existing.audio_url
-          
-          // 핵심: 해당 타입(이미지면 이미지, 음원이면 음원)이 이미 '실제로' 있을 때만 교체 여부를 묻습니다.
-          if (existingUrl) {
-            if (!confirm(`[${matchPrefix}]번의 ${isImage ? '이미지' : '음원'}가 이미 존재합니다. 새로운 파일로 교체하시겠습니까?\n(기존 파일은 스토리지에서 삭제됩니다)`)) {
-              continue
-            }
-
-            // 1. 기존 파일 스토리지에서 삭제
-            const oldFileName = existingUrl.split('/').pop()
-            if (oldFileName) {
-              await supabase.storage.from(isImage ? 'images' : 'audio').remove([oldFileName])
-            }
-          }
-
-          // 2. DB 업데이트 (이미 존재하면 해당 타입만 업데이트)
-          const updateData = isImage 
-            ? { image_url: publicUrl, image_name: file.name } 
-            : { audio_url: publicUrl, audio_name: file.name }
-          await supabase.from('files').update(updateData).eq('id', existing.id)
-        } else {
-          await supabase.from('files').insert({
-            name: matchPrefix,
-            image_url: type === 'image' ? publicUrl : null,
-            image_name: type === 'image' ? file.name : null,
-            audio_url: type === 'audio' ? publicUrl : null,
-            audio_name: type === 'audio' ? file.name : null
-          })
+    if (existing) {
+      const isImage = type === 'image'
+      const existingUrl = isImage ? existing.image_url : existing.audio_url
+      
+      if (existingUrl) {
+        if (!confirm(`[${matchPrefix}]번의 ${isImage ? '이미지' : '음원'}가 이미 존재합니다. 교체하시겠습니까?`)) {
+          return
+        }
+        const oldFileName = existingUrl.split('/').pop()
+        if (oldFileName) {
+          await supabase.storage.from(isImage ? 'images' : 'audio').remove([oldFileName])
         }
       }
-      toast.success('처리가 완료되었습니다!', { id: toastId })
+
+      const updateData = isImage 
+        ? { image_url: publicUrl, image_name: file.name } 
+        : { audio_url: publicUrl, audio_name: file.name }
+      await supabase.from('files').update(updateData).eq('id', existing.id)
+    } else {
+      await supabase.from('files').insert({
+        name: matchPrefix,
+        image_url: type === 'image' ? publicUrl : null,
+        image_name: type === 'image' ? file.name : null,
+        audio_url: type === 'audio' ? publicUrl : null,
+        audio_name: type === 'audio' ? file.name : null
+      })
+    }
+  }
+
+  const handleFileUpload = async (type: 'image' | 'audio', e: React.ChangeEvent<HTMLInputElement> | React.DragEvent) => {
+    let filesToUpload: File[] = []
+    if ('target' in e && (e.target as HTMLInputElement).files) {
+      filesToUpload = Array.from((e.target as HTMLInputElement).files!)
+    } else if ('dataTransfer' in e && e.dataTransfer.files) {
+      filesToUpload = Array.from(e.dataTransfer.files)
+    }
+    if (filesToUpload.length === 0) return
+
+    const needsMatching: PendingFile[] = []
+    const directUploads: File[] = []
+
+    filesToUpload.forEach(file => {
+      const baseName = file.name.replace(/\.[^/.]+$/, "") 
+      const hasNumber = /^\d+/.test(baseName)
+      
+      if (!hasNumber) {
+        needsMatching.push({
+          id: Math.random().toString(36).substring(2),
+          file,
+          type,
+          suggestedName: '',
+          finalName: '',
+          isSet: false
+        })
+      } else {
+        directUploads.push(file)
+      }
+    })
+
+    if (needsMatching.length > 0) {
+      setPendingFiles(needsMatching)
+      setIsMatchDialogOpen(true)
+    }
+
+    if (directUploads.length > 0) {
+      setIsUploading(true)
+      const toastId = toast.loading(`${directUploads.length}개 파일 업로드 중...`)
+      try {
+        for (const file of directUploads) {
+          await processUpload(file, type)
+        }
+        toast.success('다이렉트 업로드 완료!', { id: toastId })
+        fetchFiles()
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : '알 수 없는 오류'
+        toast.error(`업로드 실패: ${errorMessage}`, { id: toastId })
+      } finally {
+        setIsUploading(false)
+      }
+    }
+    
+    if (imageInputRef.current) imageInputRef.current.value = ''
+    if (audioInputRef.current) audioInputRef.current.value = ''
+  }
+
+  const handleMatchedConfirm = async (matchedFiles: PendingFile[]) => {
+    setIsMatchDialogOpen(false)
+    setIsUploading(true)
+    const toastId = toast.loading(`매칭된 ${matchedFiles.length}개 파일 처리 중...`)
+
+    try {
+      for (const pf of matchedFiles) {
+        if (!pf.finalName) continue
+        await processUpload(pf.file, pf.type, pf.finalName)
+      }
+      toast.success('지능형 매칭 업로드 완료!', { id: toastId })
       fetchFiles()
-    } catch (error: any) {
-      toast.error(`업로드 실패: ${error.message}`, { id: toastId })
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : '알 수 없는 오류'
+      toast.error(`매칭 업로드 실패: ${errorMessage}`, { id: toastId })
     } finally {
       setIsUploading(false)
-      if (imageInputRef.current) imageInputRef.current.value = ''
-      if (audioInputRef.current) audioInputRef.current.value = ''
+      setPendingFiles([])
     }
   }
 
@@ -339,13 +419,32 @@ export default function HomePage() {
       </div>
 
       <section className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-black text-white italic tracking-tighter">시그 자산 목록 <span className="text-blue-500 ml-2">[{files.length}]</span></h2>
+        <div className="flex items-center justify-between gap-6">
+          <h2 className="text-2xl font-black text-white italic tracking-tighter">시그 자산 목록 <span className="text-blue-500 ml-2">[{filteredFiles.length}]</span></h2>
+          
+          {/* 구간 필터 탭 */}
+          <div className="flex flex-wrap gap-2 p-1.5 bg-white/5 rounded-2xl border border-white/10 shadow-inner overflow-x-auto no-scrollbar">
+            {ranges.map((range) => (
+              <button
+                key={range.value}
+                onClick={() => setFilterRange(range.value)}
+                className={`
+                  px-4 py-2 rounded-xl text-xs font-black transition-all duration-200 whitespace-nowrap
+                  ${filterRange === range.value 
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' 
+                    : 'text-white/30 hover:text-white/60 hover:bg-white/5'
+                  }
+                `}
+              >
+                {range.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {viewMode === 'grid' ? (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            {files.map((file) => (
+            {filteredFiles.map((file) => (
               <SigGridItem 
                 key={file.id} 
                 file={file} 
@@ -371,7 +470,7 @@ export default function HomePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {files.map((file) => (
+                {filteredFiles.map((file) => (
                   <SigTableRow 
                     key={file.id} 
                     file={file} 
@@ -394,6 +493,17 @@ export default function HomePage() {
       >
         <ArrowUp className="w-8 h-8 group-hover:scale-110 transition-transform" />
       </button>
+
+      {/* 지능형 매칭 다이얼로그 */}
+      <AssetMatchDialog 
+        isOpen={isMatchDialogOpen}
+        pendingFiles={pendingFiles}
+        onConfirm={handleMatchedConfirm}
+        onCancel={() => {
+          setIsMatchDialogOpen(false)
+          setPendingFiles([])
+        }}
+      />
     </main>
   )
 }
