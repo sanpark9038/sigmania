@@ -75,44 +75,44 @@ export function SigGridItem({ file, title, copyingId, onCopy, onDelete }: SigGri
         </div>
       </div>
 
-      {/* 정보 영역 - 초간결 모드 */}
-      <div className="p-5 flex flex-col flex-grow">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-             {/* 재생 버튼 - ID 옆으로 배치 */}
+      {/* 정보 영역 - 초밀착 압축 모드 */}
+      <div className="p-3 flex flex-col flex-grow">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+             {/* 재생 버튼 - 사이즈 최적화 */}
              {file.audio_url && (
                 <button 
                   onClick={togglePlay}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all active:scale-90 border border-white/10 ${isPlaying ? 'bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-white/5 text-blue-400 hover:bg-blue-600 hover:text-white'}`}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-all active:scale-90 border border-white/10 ${isPlaying ? 'bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-white/5 text-blue-400 hover:bg-blue-600 hover:text-white'}`}
                 >
-                  {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current ml-1" />}
+                  {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
                 </button>
              )}
-             <span className="text-3xl font-black italic text-white tracking-widest leading-none">{pureId}</span>
+             <span className="text-2xl font-black italic text-white tracking-widest leading-none">{pureId}</span>
           </div>
         </div>
 
         {title && (
-          <div className="mb-4 px-1 py-1.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
-            <p className="text-[11px] font-bold text-blue-400 text-center truncate px-1">
+          <div className="mb-2 px-1 py-1 bg-blue-500/5 rounded-lg border border-blue-500/10">
+            <p className="text-[13px] font-bold text-blue-400/90 text-center truncate px-1">
               {title}
             </p>
           </div>
         )}
         
-        <div className="mt-auto flex items-center gap-2">
+        <div className="mt-auto flex items-center gap-1.5">
            <button 
             onClick={() => file.audio_url && onCopy(file.id, file.audio_url, 'aud')}
-            className={`flex-1 flex items-center justify-center gap-2 h-12 rounded-xl text-[12px] font-black uppercase tracking-widest transition-all border border-white/5 ${isCopyingAud ? 'bg-green-500 text-white border-transparent' : 'bg-white/5 hover:bg-blue-600 text-white/60 hover:text-white hover:border-transparent text-center'}`}
+            className={`flex-1 flex items-center justify-center gap-1.5 h-10 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all border border-white/5 ${isCopyingAud ? 'bg-green-500 text-white border-transparent' : 'bg-white/5 hover:bg-blue-600 text-white/50 hover:text-white hover:border-transparent text-center'}`}
           >
-            {isCopyingAud ? <Check className="w-4 h-4"/> : <><Music className="w-4 h-4"/> COPY</>}
+            {isCopyingAud ? <Check className="w-3.5 h-3.5"/> : <><Music className="w-3.5 h-3.5"/> COPY</>}
           </button>
 
           <button 
             onClick={() => onDelete(file.id, file.image_url, file.audio_url)}
-            className="w-12 h-12 flex items-center justify-center bg-red-600/10 hover:bg-red-600 text-red-500 hover:text-white rounded-xl transition-all border border-white/5"
+            className="w-10 h-10 flex items-center justify-center bg-red-600/5 hover:bg-red-600 text-red-500/40 hover:text-white rounded-lg transition-all border border-white/5"
           >
-            <Trash2 className="w-5 h-5" />
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
