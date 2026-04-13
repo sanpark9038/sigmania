@@ -5,18 +5,26 @@ import { SigEntry } from '@/types'
 
 interface Props {
   file: SigEntry
+  title?: string
   copyingId: string | null
   onCopy: (id: string, url: string, type: 'img' | 'aud') => void
   onDelete: (id: string, img: string | null, aud: string | null) => void
 }
 
-export function SigTableRow({ file, copyingId, onCopy, onDelete }: Props) {
+export function SigTableRow({ file, title, copyingId, onCopy, onDelete }: Props) {
   return (
     <tr className="hover:bg-white/[0.02] transition-all group border-b border-white/5 last:border-0">
       {/* 매칭번호 섹션 */}
       <td className="px-10 py-10">
-        <div className="text-5xl font-black text-white tracking-tighter opacity-80 group-hover:opacity-100 transition-opacity">
-          {file.name}
+        <div className="flex flex-col gap-1">
+          <div className="text-5xl font-black text-white tracking-tighter opacity-80 group-hover:opacity-100 transition-opacity">
+            {file.name}
+          </div>
+          {title && (
+            <div className="text-sm font-bold text-blue-400/60 group-hover:text-blue-400 transition-colors tracking-tight">
+              {title}
+            </div>
+          )}
         </div>
       </td>
       

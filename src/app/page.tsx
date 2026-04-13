@@ -24,6 +24,12 @@ import { SigEntry, SortField, SortOrder } from '@/types'
 import { SigTableRow } from '@/components/SigTableRow'
 import { SigGridItem } from '@/components/SigGridItem'
 import { useRouter } from 'next/navigation'
+import sampleRefined from '../../sample_refined.json'
+
+const titleMap = new Map<string, string>()
+sampleRefined.forEach(item => {
+  titleMap.set(item.sig_number.toString(), item.title)
+})
 
 export default function HomePage() {
   const [isDragging, setIsDragging] = useState<'image' | 'audio' | null>(null)
@@ -343,6 +349,7 @@ export default function HomePage() {
               <SigGridItem 
                 key={file.id} 
                 file={file} 
+                title={titleMap.get(file.name.replace(/[^0-9]/g, ''))}
                 copyingId={copyingId} 
                 onCopy={handleCopyUrl} 
                 onDelete={handleDeleteFile} 
@@ -368,6 +375,7 @@ export default function HomePage() {
                   <SigTableRow 
                     key={file.id} 
                     file={file} 
+                    title={titleMap.get(file.name.replace(/[^0-9]/g, ''))}
                     copyingId={copyingId} 
                     onCopy={handleCopyUrl} 
                     onDelete={handleDeleteFile} 

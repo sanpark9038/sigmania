@@ -4,12 +4,13 @@ import { SigEntry } from '@/types'
 
 interface SigGridItemProps {
   file: SigEntry
+  title?: string
   copyingId: string | null
   onCopy: (id: string, url: string, type: 'img' | 'aud') => void
   onDelete: (id: string, imageUrl: string | null, audioUrl: string | null) => void
 }
 
-export function SigGridItem({ file, copyingId, onCopy, onDelete }: SigGridItemProps) {
+export function SigGridItem({ file, title, copyingId, onCopy, onDelete }: SigGridItemProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   
@@ -90,6 +91,14 @@ export function SigGridItem({ file, copyingId, onCopy, onDelete }: SigGridItemPr
              <span className="text-3xl font-black italic text-white tracking-widest leading-none">{pureId}</span>
           </div>
         </div>
+
+        {title && (
+          <div className="mb-4 px-1 py-1.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
+            <p className="text-[11px] font-bold text-blue-400 text-center truncate px-1">
+              {title}
+            </p>
+          </div>
+        )}
         
         <div className="mt-auto flex items-center gap-2">
            <button 

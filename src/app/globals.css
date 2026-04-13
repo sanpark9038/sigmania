@@ -43,10 +43,25 @@ body {
 }
 
 /* Custom Utilities for Speed & Simplicity */
+/* Note: @apply in Tailwind v4 can cause warnings in some IDEs. 
+   Prefer using standard Tailwind classes directly in components. */
 .big-button {
-  @apply px-8 py-4 text-xl font-bold transition-all active:scale-95;
+  padding: 1rem 2rem;
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+  font-weight: 700;
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+.big-button:active {
+  transform: scale(0.95);
 }
 
 .drop-zone-active {
-  @apply border-primary bg-primary/10 scale-[1.02];
+  border-color: var(--primary);
+  background-color: rgba(59, 130, 246, 0.1);
+  transform: scale(1.02);
 }
+
