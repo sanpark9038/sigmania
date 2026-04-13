@@ -67,8 +67,19 @@ export default function QuickCopyPage() {
     try {
       let text = '';
       if (type === 'id') text = (file.name || '').replace(/[^0-9]/g, '')
-      if (type === 'img') text = file.image_url || ''
-      if (type === 'aud') text = file.audio_url || ''
+      if (type === 'img') {
+        text = file.image_url || ''
+        if (text && text.includes('appwrite.io') && !text.includes('&.jpg')) {
+          text += '&.jpg'
+        }
+      }
+      if (type === 'aud') {
+        text = file.audio_url || ''
+        if (text && text.includes('appwrite.io') && !text.includes('&.mp3')) {
+          text += '&.mp3'
+        }
+      }
+      
       if (!text) {
         toast.error(`${type.toUpperCase()} 데이터가 없습니다.`, { position: 'top-center' })
         return;
@@ -174,13 +185,13 @@ export default function QuickCopyPage() {
         if (group.imgFile) {
           const file = new File([group.imgFile.data], group.imgFile.name)
           const uploaded = await storage.createFile(BUCKET_IMAGES, ID.unique(), file)
-          imgUrl = `${ENDPOINT}/storage/buckets/${BUCKET_IMAGES}/files/${uploaded.$id}/view?project=${PROJECT_ID}`
+          imgUrl = `${ENDPOINT}/storage/buckets/${BUCKET_IMAGES}/files/${uploaded.$id}/view?project=${PROJECT_ID}&.jpg`
         }
 
         if (group.audFile) {
           const file = new File([group.audFile.data], group.audFile.name)
           const uploaded = await storage.createFile(BUCKET_AUDIO, ID.unique(), file)
-          audUrl = `${ENDPOINT}/storage/buckets/${BUCKET_AUDIO}/files/${uploaded.$id}/view?project=${PROJECT_ID}`
+          audUrl = `${ENDPOINT}/storage/buckets/${BUCKET_AUDIO}/files/${uploaded.$id}/view?project=${PROJECT_ID}&.mp3`
         }
 
         const docName = `${group.id}-${group.name}`
