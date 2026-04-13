@@ -8,7 +8,9 @@ import {
   Zap, Copy, List as ListIcon
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { supabase } from '@/lib/supabase'
+import { AssetService } from '@/services/assetService'
+import { databases, storage, ID, DB_ID, COLLECTION_ID, BUCKET_IMAGES, BUCKET_AUDIO, ENDPOINT, PROJECT_ID } from '@/lib/appwrite'
+import { Query } from 'appwrite'
 import { SigEntry } from '@/types'
 import JSZip from 'jszip'
 
@@ -40,8 +42,8 @@ export default function QuickCopyPage() {
 
   const fetchFiles = useCallback(async () => {
     setIsLoading(true)
-    const { data } = await supabase.from('files').select('*')
-    if (data) {
+    try {
+      const data = await AssetService.fetchAll()
       const sortedData = [...data].sort((a, b) => {
         const numA = parseInt((a.name || '').replace(/[^0-9]/g, '')) || 0
         const numB = parseInt((b.name || '').replace(/[^0-9]/g, '')) || 0
@@ -49,6 +51,8 @@ export default function QuickCopyPage() {
       })
       setFiles(sortedData)
       if (sortedData.length > 0 && !focusedId) setFocusedId(sortedData[0].id)
+    } catch (err) {
+      console.error('fetchFiles 실패:', err)
     }
     setIsLoading(false)
   }, [focusedId])
@@ -168,27 +172,36 @@ export default function QuickCopyPage() {
         let imgUrl = '', audUrl = ''
 
         if (group.imgFile) {
-          const path = `sig-img/${group.id}-${group.imgFile.name}`
-          const { error } = await supabase.storage.from('assets').upload(path, group.imgFile.data, { upsert: true })
-          if (error) throw error
-          const { data } = supabase.storage.from('assets').getPublicUrl(path)
-          imgUrl = data.publicUrl
+          const file = new File([group.imgFile.data], group.imgFile.name)
+          const uploaded = await storage.createFile(BUCKET_IMAGES, ID.unique(), file)
+          imgUrl = `${ENDPOINT}/storage/buckets/${BUCKET_IMAGES}/files/${uploaded.$id}/view?project=${PROJECT_ID}`
         }
 
         if (group.audFile) {
-          const path = `sig-aud/${group.id}-${group.audFile.name}`
-          const { error } = await supabase.storage.from('assets').upload(path, group.audFile.data, { upsert: true })
-          if (error) throw error
-          const { data } = supabase.storage.from('assets').getPublicUrl(path)
-          audUrl = data.publicUrl
+          const file = new File([group.audFile.data], group.audFile.name)
+          const uploaded = await storage.createFile(BUCKET_AUDIO, ID.unique(), file)
+          audUrl = `${ENDPOINT}/storage/buckets/${BUCKET_AUDIO}/files/${uploaded.$id}/view?project=${PROJECT_ID}`
         }
 
-        const { error: dbErr } = await supabase.from('files').upsert({
-          name: `${group.id}-${group.name}`,
-          image_url: imgUrl || undefined,
-          audio_url: audUrl || undefined,
-        }, { onConflict: 'name' })
-        if (dbErr) throw dbErr
+        const docName = `${group.id}-${group.name}`
+        // 기존 문서가 있으면 업데이트, 없으면 생성
+        const existing = await databases.listDocuments(DB_ID, COLLECTION_ID, [
+          Query.equal('name', docName), Query.limit(1)
+        ])
+        if (existing.total > 0) {
+          await databases.updateDocument(DB_ID, COLLECTION_ID, existing.documents[0].$id, {
+            ...(imgUrl ? { image_url: imgUrl } : {}),
+            ...(audUrl ? { audio_url: audUrl } : {}),
+          })
+        } else {
+          await databases.createDocument(DB_ID, COLLECTION_ID, ID.unique(), {
+            name: docName,
+            image_url: imgUrl || null,
+            image_name: group.imgFile?.name || null,
+            audio_url: audUrl || null,
+            audio_name: group.audFile?.name || null,
+          })
+        }
 
         setUploadGroups(prev => prev.map((g, idx) => idx === i ? { ...g, status: 'done' } : g))
       } catch (err) {

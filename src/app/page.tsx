@@ -14,7 +14,8 @@ import {
   ArrowUp
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { supabase } from '@/lib/supabase'
+import { account } from '@/lib/appwrite'
+import { AssetService } from '@/services/assetService'
 import { SigEntry, SortField, SortOrder } from '@/types'
 import { SigTableRow } from '@/components/SigTableRow'
 import { SigGridItem } from '@/components/SigGridItem'
@@ -63,38 +64,33 @@ export default function HomePage() {
   const audioInputRef = useRef<HTMLInputElement>(null)
 
   const fetchFiles = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('files')
-      .select('*')
-    // 제거: .order(sortField, { ascending: sortOrder === 'asc' })
-
-    if (data) {
+    try {
+      const data = await AssetService.fetchAll()
       const sortedData = [...data].sort((a, b) => {
         if (sortField === 'name') {
           const numA = parseInt((a.name || '').replace(/[^0-9]/g, '')) || 0
           const numB = parseInt((b.name || '').replace(/[^0-9]/g, '')) || 0
           return sortOrder === 'asc' ? numA - numB : numB - numA
         } else {
-          // 작성일 정렬 등 다른 필드는 기본 정렬 유지
-          const valA = a[sortField] || ''
-          const valB = b[sortField] || ''
+          const valA = (a as unknown as Record<string, string>)[sortField] || ''
+          const valB = (b as unknown as Record<string, string>)[sortField] || ''
           if (valA < valB) return sortOrder === 'asc' ? -1 : 1
           if (valA > valB) return sortOrder === 'asc' ? 1 : -1
           return 0
         }
       })
       setFiles(sortedData)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '알 수 없는 오류'
+      console.error('데이터 로드 실패:', msg)
     }
-    if (error) console.error(error)
   }, [sortField, sortOrder])
 
   useEffect(() => {
-    fetchFiles()
-    const channel = supabase
-      .channel('public:files')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'files' }, () => fetchFiles())
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    // Appwrite 익명 세션 초기화 후 데이터 로드
+    account.createAnonymousSession()
+      .catch(() => { /* 이미 세션이 있으면 무시 */ })
+      .finally(() => fetchFiles())
   }, [fetchFiles])
 
   const filteredFiles = files.filter(file => {
@@ -141,16 +137,7 @@ export default function HomePage() {
     if (!confirm('정말 이 항목을 삭제하시겠습니까? (이미지와 음원 모두 삭제됩니다)')) return
     const toastId = toast.loading('항목 및 스토리지 파일 삭제 중...')
     try {
-      if (imageUrl) {
-        const imageName = imageUrl.split('/').pop()
-        if (imageName) await supabase.storage.from('images').remove([imageName])
-      }
-      if (audioUrl) {
-        const audioName = audioUrl.split('/').pop()
-        if (audioName) await supabase.storage.from('audio').remove([audioName])
-      }
-      const { error } = await supabase.from('files').delete().eq('id', id)
-      if (error) throw error
+      await AssetService.delete(id, imageUrl, audioUrl)
       toast.success('성공적으로 삭제되었습니다!', { id: toastId })
       fetchFiles()
     } catch (error: unknown) {
@@ -160,50 +147,7 @@ export default function HomePage() {
   }
 
   const processUpload = async (file: File, type: 'image' | 'audio', matchedName?: string) => {
-    const fileExt = file.name.split('.').pop()?.toLowerCase() || ''
-    const baseName = file.name.replace(/\.[^/.]+$/, "") 
-    const matchPrefix = matchedName || baseName.match(/^\d+/)?.[0] || baseName
-
-    const fileName = `${Math.random().toString(36).substring(2)}-${Date.now()}.${fileExt}`
-    const bucket = type === 'image' ? 'images' : 'audio'
-    
-    const { error: uploadError } = await supabase.storage.from(bucket).upload(fileName, file)
-    if (uploadError) throw uploadError
-    const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(fileName)
-
-    const { data: existing } = await supabase
-      .from('files')
-      .select('*')
-      .eq('name', matchPrefix)
-      .single()
-
-    if (existing) {
-      const isImage = type === 'image'
-      const existingUrl = isImage ? existing.image_url : existing.audio_url
-      
-      if (existingUrl) {
-        if (!confirm(`[${matchPrefix}]번의 ${isImage ? '이미지' : '음원'}가 이미 존재합니다. 교체하시겠습니까?`)) {
-          return
-        }
-        const oldFileName = existingUrl.split('/').pop()
-        if (oldFileName) {
-          await supabase.storage.from(isImage ? 'images' : 'audio').remove([oldFileName])
-        }
-      }
-
-      const updateData = isImage 
-        ? { image_url: publicUrl, image_name: file.name } 
-        : { audio_url: publicUrl, audio_name: file.name }
-      await supabase.from('files').update(updateData).eq('id', existing.id)
-    } else {
-      await supabase.from('files').insert({
-        name: matchPrefix,
-        image_url: type === 'image' ? publicUrl : null,
-        image_name: type === 'image' ? file.name : null,
-        audio_url: type === 'audio' ? publicUrl : null,
-        audio_name: type === 'audio' ? file.name : null
-      })
-    }
+    await AssetService.uploadFile(file, type, matchedName)
   }
 
   const handleFileUpload = async (type: 'image' | 'audio', e: React.ChangeEvent<HTMLInputElement> | React.DragEvent) => {
