@@ -15,6 +15,8 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
+import { getStorageObjectPath } from '@/lib/storage'
+import { createThumbnailFile } from '@/lib/thumbnail'
 import { SigEntry, SortField, SortOrder } from '@/types'
 import { SigTableRow } from '@/components/SigTableRow'
 import { SigGridItem } from '@/components/SigGridItem'
@@ -35,9 +37,12 @@ sampleRefined.forEach(item => {
   titleMap.set(item.sig_number.toString(), item.title)
 })
 
+const FILES_SELECT = 'id,name,image_name,audio_name,image_url,thumb_url,audio_url,created_at'
+
 export default function HomePage() {
   const [isDragging, setIsDragging] = useState<'image' | 'audio' | null>(null)
   const [isUploading, setIsUploading] = useState(false)
+  const [isBackfillingThumbnails, setIsBackfillingThumbnails] = useState(false)
   const [files, setFiles] = useState<SigEntry[]>([])
   const [copyingId, setCopyingId] = useState<string | null>(null)
   const [sortField, setSortField] = useState<SortField>('name')
@@ -65,7 +70,7 @@ export default function HomePage() {
   const fetchFiles = useCallback(async () => {
     const { data, error } = await supabase
       .from('files')
-      .select('*')
+      .select(FILES_SELECT)
     // 제거: .order(sortField, { ascending: sortOrder === 'asc' })
 
     if (data) {
@@ -109,6 +114,8 @@ export default function HomePage() {
     return num >= rangeStart && num < rangeEnd
   })
 
+  const missingThumbnailCount = files.filter((file) => file.image_url && !file.thumb_url).length
+
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
@@ -137,17 +144,26 @@ export default function HomePage() {
     );
   }
 
-  const handleDeleteFile = async (id: string, imageUrl: string | null, audioUrl: string | null) => {
+  const handleDeleteFile = async (
+    id: string,
+    imageUrl: string | null,
+    audioUrl: string | null,
+    thumbUrl?: string | null
+  ) => {
     if (!confirm('정말 이 항목을 삭제하시겠습니까? (이미지와 음원 모두 삭제됩니다)')) return
     const toastId = toast.loading('항목 및 스토리지 파일 삭제 중...')
     try {
       if (imageUrl) {
-        const imageName = imageUrl.split('/').pop()
-        if (imageName) await supabase.storage.from('images').remove([imageName])
+        const imagePath = getStorageObjectPath(imageUrl, 'images')
+        if (imagePath) await supabase.storage.from('images').remove([imagePath])
+      }
+      if (thumbUrl) {
+        const thumbPath = getStorageObjectPath(thumbUrl, 'images')
+        if (thumbPath) await supabase.storage.from('images').remove([thumbPath])
       }
       if (audioUrl) {
-        const audioName = audioUrl.split('/').pop()
-        if (audioName) await supabase.storage.from('audio').remove([audioName])
+        const audioPath = getStorageObjectPath(audioUrl, 'audio')
+        if (audioPath) await supabase.storage.from('audio').remove([audioPath])
       }
       const { error } = await supabase.from('files').delete().eq('id', id)
       if (error) throw error
@@ -170,10 +186,23 @@ export default function HomePage() {
     const { error: uploadError } = await supabase.storage.from(bucket).upload(fileName, file)
     if (uploadError) throw uploadError
     const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(fileName)
+    let thumbUrl: string | null = null
+
+    if (type === 'image') {
+      const thumbnailFile = await createThumbnailFile(file, file.name)
+      const thumbPath = `thumbs/${Math.random().toString(36).substring(2)}-${Date.now()}.webp`
+      const { error: thumbError } = await supabase.storage
+        .from('images')
+        .upload(thumbPath, thumbnailFile, { contentType: 'image/webp', upsert: false })
+
+      if (thumbError) throw thumbError
+
+      thumbUrl = supabase.storage.from('images').getPublicUrl(thumbPath).data.publicUrl
+    }
 
     const { data: existing } = await supabase
       .from('files')
-      .select('*')
+      .select('id,name,image_url,thumb_url,audio_url')
       .eq('name', matchPrefix)
       .single()
 
@@ -185,14 +214,21 @@ export default function HomePage() {
         if (!confirm(`[${matchPrefix}]번의 ${isImage ? '이미지' : '음원'}가 이미 존재합니다. 교체하시겠습니까?`)) {
           return
         }
-        const oldFileName = existingUrl.split('/').pop()
-        if (oldFileName) {
-          await supabase.storage.from(isImage ? 'images' : 'audio').remove([oldFileName])
+        const oldPath = getStorageObjectPath(existingUrl, isImage ? 'images' : 'audio')
+        if (oldPath) {
+          await supabase.storage.from(isImage ? 'images' : 'audio').remove([oldPath])
+        }
+      }
+
+      if (isImage && existing.thumb_url) {
+        const oldThumbPath = getStorageObjectPath(existing.thumb_url, 'images')
+        if (oldThumbPath) {
+          await supabase.storage.from('images').remove([oldThumbPath])
         }
       }
 
       const updateData = isImage 
-        ? { image_url: publicUrl, image_name: file.name } 
+        ? { image_url: publicUrl, image_name: file.name, thumb_url: thumbUrl } 
         : { audio_url: publicUrl, audio_name: file.name }
       await supabase.from('files').update(updateData).eq('id', existing.id)
     } else {
@@ -200,9 +236,68 @@ export default function HomePage() {
         name: matchPrefix,
         image_url: type === 'image' ? publicUrl : null,
         image_name: type === 'image' ? file.name : null,
+        thumb_url: type === 'image' ? thumbUrl : null,
         audio_url: type === 'audio' ? publicUrl : null,
         audio_name: type === 'audio' ? file.name : null
       })
+    }
+  }
+
+  const backfillMissingThumbnails = async () => {
+    const targets = files.filter((file) => file.image_url && !file.thumb_url)
+    if (targets.length === 0) {
+      toast.info('Backfill needed for 0 items.')
+      return
+    }
+
+    if (!confirm(`${targets.length} existing images are missing thumbnails. Generate them now?`)) {
+      return
+    }
+
+    setIsBackfillingThumbnails(true)
+    const toastId = toast.loading(`Generating thumbnails for ${targets.length} existing images...`)
+    let updated = 0
+
+    try {
+      for (const file of targets) {
+        const response = await fetch(file.image_url as string)
+        if (!response.ok) {
+          throw new Error(`Failed to fetch original image for ${file.name}`)
+        }
+
+        const blob = await response.blob()
+        const originalName = file.image_name || `${file.name}.jpg`
+        const thumbnailFile = await createThumbnailFile(blob, originalName)
+        const thumbPath = `thumbs/backfill-${file.id}-${Date.now()}.webp`
+
+        const { error: thumbError } = await supabase.storage
+          .from('images')
+          .upload(thumbPath, thumbnailFile, { contentType: 'image/webp', upsert: false })
+
+        if (thumbError) {
+          throw thumbError
+        }
+
+        const thumbUrl = supabase.storage.from('images').getPublicUrl(thumbPath).data.publicUrl
+        const { error: updateError } = await supabase
+          .from('files')
+          .update({ thumb_url: thumbUrl })
+          .eq('id', file.id)
+
+        if (updateError) {
+          throw updateError
+        }
+
+        updated += 1
+      }
+
+      toast.success(`Thumbnail backfill complete: ${updated} updated.`, { id: toastId })
+      fetchFiles()
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      toast.error(`Thumbnail backfill failed: ${errorMessage}`, { id: toastId })
+    } finally {
+      setIsBackfillingThumbnails(false)
     }
   }
 
@@ -319,6 +414,16 @@ export default function HomePage() {
               <span>시그 퀵리모컨 실행</span>
             </button>
             
+            <button
+              onClick={backfillMissingThumbnails}
+              disabled={isBackfillingThumbnails || missingThumbnailCount === 0}
+              className="px-6 py-4 bg-white/5 hover:bg-white/10 text-white text-sm font-black rounded-2xl transition-all border border-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isBackfillingThumbnails
+                ? 'THUMBNAILS...'
+                : `THUMBNAILS ${missingThumbnailCount > 0 ? `(${missingThumbnailCount})` : ''}`}
+            </button>
+
             <div className="flex items-center gap-2 bg-white/5 p-2 rounded-2xl border border-white/10 shadow-inner">
               <button 
                 onClick={() => setViewMode('grid')}

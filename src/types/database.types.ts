@@ -23,6 +23,7 @@ export type Database = {
           image_name: string | null
           image_url: string | null
           name: string
+          thumb_url: string | null
           type: string | null
           url: string | null
         }
@@ -34,6 +35,7 @@ export type Database = {
           image_name?: string | null
           image_url?: string | null
           name: string
+          thumb_url?: string | null
           type?: string | null
           url?: string | null
         }
@@ -45,6 +47,7 @@ export type Database = {
           image_name?: string | null
           image_url?: string | null
           name?: string
+          thumb_url?: string | null
           type?: string | null
           url?: string | null
         }

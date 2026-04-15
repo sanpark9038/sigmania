@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
+import { createThumbnailFile } from '@/lib/thumbnail'
 import { SigEntry } from '@/types'
 import JSZip from 'jszip'
 
@@ -26,6 +27,8 @@ interface UploadGroup {
   status: 'pending' | 'uploading' | 'done' | 'error';
 }
 
+const FILES_SELECT = 'id,name,image_name,audio_name,image_url,thumb_url,audio_url,created_at'
+
 export default function QuickCopyPage() {
   const [files, setFiles] = useState<SigEntry[]>([])
   const [focusedId, setFocusedId] = useState<string | null>(null)
@@ -40,7 +43,7 @@ export default function QuickCopyPage() {
 
   const fetchFiles = useCallback(async () => {
     setIsLoading(true)
-    const { data } = await supabase.from('files').select('*')
+    const { data } = await supabase.from('files').select(FILES_SELECT)
     if (data) {
       const sortedData = [...data].sort((a, b) => {
         const numA = parseInt((a.name || '').replace(/[^0-9]/g, '')) || 0
@@ -165,7 +168,7 @@ export default function QuickCopyPage() {
       const group = uploadGroups[i]
       try {
         setUploadGroups(prev => prev.map((g, idx) => idx === i ? { ...g, status: 'uploading' } : g))
-        let imgUrl = '', audUrl = ''
+        let imgUrl = '', audUrl = '', thumbUrl = ''
 
         if (group.imgFile) {
           const path = `sig-img/${group.id}-${group.imgFile.name}`
@@ -173,6 +176,14 @@ export default function QuickCopyPage() {
           if (error) throw error
           const { data } = supabase.storage.from('assets').getPublicUrl(path)
           imgUrl = data.publicUrl
+
+          const thumbnailFile = await createThumbnailFile(group.imgFile.data, group.imgFile.name)
+          const thumbPath = `sig-thumb/${group.id}-${Date.now()}.webp`
+          const { error: thumbError } = await supabase.storage
+            .from('assets')
+            .upload(thumbPath, thumbnailFile, { upsert: true, contentType: 'image/webp' })
+          if (thumbError) throw thumbError
+          thumbUrl = supabase.storage.from('assets').getPublicUrl(thumbPath).data.publicUrl
         }
 
         if (group.audFile) {
@@ -186,6 +197,7 @@ export default function QuickCopyPage() {
         const { error: dbErr } = await supabase.from('files').upsert({
           name: `${group.id}-${group.name}`,
           image_url: imgUrl || undefined,
+          thumb_url: thumbUrl || undefined,
           audio_url: audUrl || undefined,
         }, { onConflict: 'name' })
         if (dbErr) throw dbErr
